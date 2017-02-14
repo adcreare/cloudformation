@@ -1,0 +1,109 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Deploy AWS Config",
+
+    "Parameters": {
+        "S3BucketName": {
+            "Description": "Name of the bucket to CREATE to save the AWS Config logs to",
+            "Type": "String"
+        },
+        "ConfigRecorderName":{
+          "Description": "(Optional) If we already have a config recorder - it can't be deleted - so enter its name here and we will adopt it - If left empty the stack will create one with a random name",
+          "Type":"String",
+          "Default":""
+        }
+    },
+    "Conditions": {
+        "CreateWithName": {
+            "Fn::Not": [{
+                "Fn::Equals": [{
+                    "Ref": "ConfigRecorderName"
+                }, ""]
+            }]
+        }
+    },
+    "Resources": {
+
+        "ConfigRecorder": {
+            "Type": "AWS::Config::ConfigurationRecorder",
+            "Properties": {
+                "Name": {"Fn::If" : ["CreateWithName", {"Ref":"ConfigRecorderName"},{"Ref" : "AWS::NoValue"}] },
+                "RecordingGroup": {
+                    "AllSupported": true,
+                    "IncludeGlobalResourceTypes": true
+                },
+                "RoleARN": {
+                    "Fn::GetAtt": ["AWSIAM", "Arn"]
+                }
+            }
+        },
+
+        "S3Bucket": {
+            "DeletionPolicy": "Retain",
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Ref": "S3BucketName"
+                }
+            }
+        },
+        "AWSIAM": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": ["config.amazonaws.com"]
+                        },
+                        "Action": ["sts:AssumeRole"]
+                    }]
+                },
+                "ManagedPolicyArns": ["arn:aws:iam::aws:policy/service-role/AWSConfigRole"],
+                "Path": "/",
+                "Policies": [{
+                    "PolicyName": "S3-access",
+                    "PolicyDocument": {
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["s3:PutObject"],
+                                "Resource": {
+                                    "Fn::Join": ["", ["arn:aws:s3:::", {
+                                        "Ref": "S3Bucket"
+                                    }, "/AWSLogs/", {
+                                        "Ref": "AWS::AccountId"
+                                    }, "/*"]]
+                                },
+                                "Condition": {
+                                    "StringLike": {
+                                        "s3:x-amz-acl": "bucket-owner-full-control"
+                                    }
+                                }
+                            }, {
+                                "Effect": "Allow",
+                                "Action": ["s3:GetBucketAcl"],
+                                "Resource": {
+                                    "Fn::Join": ["", ["arn:aws:s3:::", {
+                                        "Ref": "S3Bucket"
+                                    }]]
+                                }
+                            }
+                        ]
+                    }
+                }]
+            }
+        },
+
+        "DeliveryChannel": {
+            "Type": "AWS::Config::DeliveryChannel",
+            "Properties": {
+                "S3BucketName": {
+                    "Ref": "S3Bucket"
+                }
+            }
+        }
+
+    }
+}
