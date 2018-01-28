@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates a KMS key and grants access to another account for access
+Parameters:
+
+  ProductionAccount:
+    Description: AWS Account Number for production
+    Type: String
+    Default: 33333322222
+
+Resources:
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Used by Assumed Roles in Dev/Test/Prod accounts to Encrypt/Decrypt code
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: !Ref AWS::StackName
+        Statement:
+          -
+            Sid: Allows admin of the key
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - kms:*
+            Resource: "*"
+          -
+            Sid: Allow use of key in another account
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub arn:aws:iam::${ProductionAccount}:root
+                # If adding additional accounts put them just in here! and add the parameter up the top!
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+  KMSAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/codepipeline-crossaccount-key
+      TargetKeyId: !Ref KMSKey
+
+Outputs:
+  KMSKeyArn:
+    Value: !GetAtt [KMSKey,Arn]

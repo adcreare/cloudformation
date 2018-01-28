@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Code pipeline Example Cross Account"
+
+Parameters:
+
+  RepoName:
+    Description: "Name of the repo to clone"
+    Type: String
+    Default: 'Test2'
+
+  CodePipeLineBucket:
+    Description: "The S3 bucket to use for codepipeline - bucket must already exist - example: codepipeline-us-east-1-773922028333"
+    Type: String
+    Default: 'codepipeline-us-east-1-011111122222'
+
+  BranchName:
+    Description: "The git branch to operate from"
+    Type: String
+    Default: 'master'
+
+  ProdAccNumber:
+    Description: "The account number of the account to perform the deployment into"
+    Type: String
+    Default: '33333322222'
+
+  KMSKeyArn:
+    Description: ARN of the KMS key to use
+    Type: String
+    Default: 'arn:aws:kms:us-east-1:011111122222:key/606723cf-6e08-4f7a-b4b8-7e5b50ee2a28'
+
+
+Resources:
+  AppPipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      Name: !Ref AWS::StackName
+      RoleArn: !GetAtt CodePipeLineRole.Arn
+      Stages:
+        -
+          Name: Source
+          Actions:
+            -
+              Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                -
+                  Name: SourceCode
+              Configuration:
+                PollForSourceChanges: true
+                BranchName: master
+                RepositoryName: !Ref RepoName
+              RunOrder: 1
+        -
+          Name: BuildVersions
+          Actions:
+            -
+              Name: CallCodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                -
+                  Name: SourceCode
+              OutputArtifacts:
+                -
+                  Name: DeployableArtifact
+              Configuration:
+                ProjectName: !ImportValue code-build-xaccount-export #
+                # ^name of the code build job (this is deployed separately and we import from cloudformation export vals
+              RunOrder: 1
+
+        -
+          Name: DeployProd  # Add addtional accounts by cloning this and calling it something else (like DeployStg)
+          Actions:          # Don't forget the additional account number parameter either
+            -
+              Name: cfnCreateChangeSet
+              RoleArn: !Sub 'arn:aws:iam::${ProdAccNumber}:role/CodePipeline-Cross-Account-Role-Access'
+              InputArtifacts:
+                -
+                  Name: DeployableArtifact
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                Capabilities: CAPABILITY_IAM
+                ChangeSetName: 'myawesomestack2-changeset'
+                RoleArn: !Sub 'arn:aws:iam::${ProdAccNumber}:role/CodePipeline-cloudformation-deploy-role'
+                StackName: 'myawesomestack2'
+                TemplatePath: DeployableArtifact::template.json
+              RunOrder: 1
+            -
+              Name: cfnExecuteChangeSet
+              RoleArn: arn:aws:iam::945437139977:role/CP-Cross-Account-Access
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: 'myawesomestack2-changeset'
+                StackName: 'myawesomestack2'
+                RoleArn: !Sub 'arn:aws:iam::${ProdAccNumber}:role/CodePipeline-cloudformation-deploy-role'
+              RunOrder: 2
+
+
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodePipeLineBucket
+        EncryptionKey:
+          Id: !Ref KMSKeyArn
+          Type: KMS
+
+  CodePipeLineRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "codepipeline.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      -
+        PolicyName: "code-pipeline-access"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Action:
+                - "*"
+              Resource: "*"
+
+Outputs:
+
+  StackName:
+    Description: "Stack Name"
+    Value: !Ref AWS::StackName
+
+  CodePipeLineJob:
+    Description: "Name of the code pipeline job created"
+    Value: !Ref AppPipeline

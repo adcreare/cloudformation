@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "code-build-services"
+
+Parameters:
+  DockerImage:
+    Type: String
+    Description: The docker repo path to build image
+    Default: node:6
+
+  KMSKeyArn:
+    Description: ARN of the KMS key
+    Type: String
+    Default: 'arn:aws:kms:us-east-1:011111122222:key/606723ff-6e07-4f7a-b3b8-7e5b51aa2a28'
+
+
+Resources:
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref AWS::StackName
+      ServiceRole: !Ref CodeBuildRole
+      EncryptionKey: !Ref KMSKeyArn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec:
+          !Sub |
+            version: 0.2
+            phases:
+                install:
+                    commands:
+                     - npm -g install yarn
+                     - 'echo "//registry.npmjs.org/:_authToken=${!NPM_TOKEN}" > ~/.npmrc'
+                pre_build:
+                    commands:
+                    - yarn
+                build:
+                    commands:
+                    - yarn build
+            artifacts:
+              files:
+                - build/*
+              discard-paths: yes
+
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !Ref DockerImage
+
+      TimeoutInMinutes: 15
+
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - '*'
+                Effect: Allow
+                Resource: '*'
+
+
+Outputs:
+
+  CodeBuild:
+    Description: "FN export value for other "
+    Value: !Ref AWS::StackName
+    Export:
+      Name: 'code-build-xaccount-export'
